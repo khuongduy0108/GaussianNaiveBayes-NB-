@@ -1,167 +1,194 @@
-#!/usr/bin/env python
-import argparse
-import pandas
-import numpy
+import csv
 import math
-import logging
+import random
 
-LOG_FILENAME = "output.log"
+#Handle data
+def loadCsv(filename):
+	lines = csv.reader(open(filename, "r"))
+	dataset = list(lines)
+	for i in range(len(dataset)):
+		dataset[i] = [float(x) for x in dataset[i]]
+	return dataset
 
-CV_NUM = 5
+#Test handling data
+""" 
+filename = 'pima-indians-diabetes.data.csv'
+SomeDataset = loadCsv(filename)
+print("Loaded data file {0:s} with {1:5d} rows".format(filename,len(SomeDataset)))
+"""
 
-ATTR_NAMES = ["RI", "Na", "Mg", "Al", "Si", "K", "Ca", "Ba", "Fe"]
-FIELD_NAMES = ["Num"] + ATTR_NAMES + ["Class"]
+#Split dataset with ratio
+def splitDataset(dataset, splitRatio):
+	trainSize = int(len(dataset) * splitRatio)
+	trainSet = []
+	copy = list(dataset)
+	while len(trainSet) < trainSize:
+		index = random.randrange(len(copy))
+		trainSet.append(copy.pop(index))
+	return [trainSet, copy]
 
+#Test splitting data
+"""
+dataset = [[1], [2], [3], [4], [5]]
+splitRatio = 0.67
+train, test = splitDataset(dataset, splitRatio)
+print('Split {0} rows into train with {1} and test with {2}'.format(len(dataset),train,test))
+"""
 
-class GNB_classifier(object):
+#Separate by Class
+def separateByClass(dataset):
+	separated = {}
+	for i in range(len(dataset)):
+		vector = dataset[i]
+		if (vector[-1] not in separated):
+			separated[vector[-1]] = []
+		separated[vector[-1]].append(vector)
+	return separated
 
-    def __init__(self, training_set, test_set):
-        self.__training_set = training_set
-        self.__test_set = test_set
-        self.__n = len(self.__training_set)
-        self.__prior()
-        self.__calculate_mean_variance()
+#Test separating by class
+"""
+dataset = [[1,20,1],[2,21,0],[3,22,1]]
+separated = separateByClass(dataset)
+print('Separated instances: {0}'.format(separated))
+"""
 
-    def __prior(self):
-        counts = self.__training_set["Class"].value_counts().to_dict()
-        self.__priors = {(k, v / self.__n) for k, v in counts.items()}
+#Calculate Mean
+def mean(numbers):
+	return sum(numbers)/float(len(numbers))
 
-    def __calculate_mean_variance(self):
-        self.__mean_variance = {}
-        for c in self.__training_set["Class"].unique():
-            filtered_set = self.__training_set[
-                (self.__training_set['Class'] == c)]
-            m_v = {}
-            for attr_name in ATTR_NAMES:
-                m_v[attr_name] = []
-                m_v[attr_name].append(filtered_set[attr_name].mean())
-                m_v[attr_name].append(
-                    math.pow(filtered_set[attr_name].std(), 2))
-            self.__mean_variance[c] = m_v
+def stdev(numbers):
+	avg = mean(numbers)
+	variance = sum([pow(x-avg,2) for x in numbers])/float(len(numbers)-1)
+	return math.sqrt(variance)
 
-    @staticmethod
-    def __calculate_probability(x, mean, variance):
-        exponent = math.exp(-(math.pow(x - mean, 2) / (2 * variance)))
-        return (1 / (math.sqrt(2 * math.pi * variance))) * exponent
+#Test stdev & mean calculation
+"""
+numbers = [1,2,3,4,5]
+print('Summary of {0}: mean={1}, stdev={2}'.format(numbers, mean(numbers), stdev(numbers)))
+"""
 
-    def predict(self):
-        predictions = {}
-        for _, row in self.__test_set.iterrows():
-            results = {}
-            for k, v in self.__priors:
-                p = 0
-                for attr_name in ATTR_NAMES:
-                    prob = self.__calculate_probability(row[attr_name], self.__mean_variance[
-                        k][attr_name][0], self.__mean_variance[k][attr_name][1])
-                    if prob > 0:
-                        p += math.log(prob)
-                results[k] = math.log(v) + p
-            predictions[int(row["Num"])] = max([key for key in results.keys() if results[
-                key] == results[max(results, key=results.get)]])
-        return predictions
+#Summarize Dataset
+def summarize(dataset):
+	summaries = [(mean(attribute), stdev(attribute)) for attribute in zip(*dataset)]
+	del summaries[-1]
+	return summaries
 
-    def print_info(self):
-        logging.info("Priors for each class: %s", self.__priors)
-        logging.info(
-            "Means and variance for each class: %s", self.__mean_variance
-        )
+#Test summarizing data
+"""
+dataset = [[1,20,0], [2,21,1], [3,22,0]]
+summary = summarize(dataset)
+print('Attribute summaries: {0}'.format(summary))
+"""
 
+#Summarize attributes by class
+def summarizeByClass(dataset):
+	separated = separateByClass(dataset)
+	summaries = {}
+	for classValue, instances in separated.items():
+		summaries[classValue] = summarize(instances)
+	return summaries
 
-class zero_r_classifier(object):
-    def __init__(self, training_set, test_set):
-        self.__test_set = test_set
-        classes = training_set["Class"].value_counts().to_dict()
-        self.__most_freq_class = max(classes, key=classes.get)
+#Test summarizing attributes
+"""
+dataset = [[1,20,1], [2,21,0], [3,22,1], [4,22,0]]
+summary = summarizeByClass(dataset)
+print('Summary by class value: {0}'.format(summary))
+"""
 
-    def predict(self):
-        predictions = {}
-        for _, row in self.__test_set.iterrows():
-            predictions[int(row["Num"])] = self.__most_freq_class
-        return predictions
+#Calculate Gaussian Probability Density Function
+def calculateProbability(x, mean, stdev):
+	exponent = math.exp(-(math.pow(x-mean,2)/(2*math.pow(stdev,2))))
+	return (1/(math.sqrt(2*math.pi)*stdev))*exponent
 
+#Testing Gaussing PDF
+"""
+x = 71.5
+mean = 73
+stdev = 6.2
+probability = calculateProbability(x,mean,stdev)
+print('Probability of belonging to this class: {0}'.format(probability))
+"""
 
-def calculate_accuracy(test_set, predictions):
-    correct = 0
-    for _, t in test_set.iterrows():
-        if t["Class"] == predictions[t["Num"]]:
-            correct += 1
-    return (correct / len(test_set)) * 100.0
+#Calculate Class Probabilities
+def calculateClassProbabilities(summaries, inputVector):
+	probabilities = {}
+	for classValue, classSummaries in summaries.items():
+		probabilities[classValue] = 1
+		for i in range(len(classSummaries)):
+			mean, stdev = classSummaries[i]
+			x = inputVector[i]
+			probabilities[classValue] *= calculateProbability(x, mean, stdev)
+		return probabilities
 
+#Testing Class Probability calculation
+"""
+summaries = {0:[(1, 0.5)], 1:[(20, 5.0)]}
+inputVector = [1.1, '?']
+probabilities = calculateClassProbabilities(summaries, inputVector)
+print('Probabilities for each class: {0}'.format(probabilities))
+"""
 
-def split_data(data, blocks_num=1, test_block=0):
-    blocks = numpy.array_split(data, blocks_num)
-    test_set = blocks[test_block]
-    if blocks_num > 1:
-        del blocks[test_block]
-    training_set = pandas.concat(blocks)
-    return training_set, test_set
+#Make a prediction
+def predict(summaries, inputVector):
+	probabilities = calculateClassProbabilities(summaries, inputVector)
+	bestLabel, bestProb = None, -1
+	for classValue, probability in probabilities.items():
+		if bestLabel is None or probability > bestProb:
+			bestProb = probability
+			bestLabel = classValue
+	return bestLabel
 
+#Test prediction
+"""
+summaries = {'A':[(1, 0.5)], 'B':[(20, 5.0)]}
+inputVector = [1.1, '?']
+result = predict(summaries, inputVector)
+print('Prediction: {0}'.format(result))
+"""
 
+#Get predictions
+
+def getPredictions(summaries, testSet):
+	predictions = []
+	for i in range(len(testSet)):
+		result = predict(summaries, testSet[i])
+		predictions.append(result)
+	return predictions
+
+#Test predictions
+"""
+summaries = {'A':[(1, 0.5)], 'B':[(20, 5.0)]}
+testSet = [[1.1,'?'], [19.1,'?']]
+predictions = getPredictions(summaries, testSet)
+print('Predictions: {0}',format(predictions))
+"""
+
+#Get Accuracy
+def getAccuracy(testSet, predictions):
+	correct = 0
+	for x in range(len(testSet)):
+		if testSet[x][-1] == predictions[x]:
+			correct += 1
+	return (correct/float(len(testSet)))*100.0
+
+#Test accuracy
+"""
+testSet = [[1,1,1,'a'], [2,2,2,'a'], [3,3,3,'b']]
+predictions = ['a', 'a', 'a']
+accuracy = getAccuracy(testSet, predictions)
+print('Accuracy: {0}'.format(accuracy))
+"""
 def main():
-    logging.basicConfig(filename=LOG_FILENAME, level=logging.INFO)
-    parser = argparse.ArgumentParser(
-        description='Gaussian Naive Bayes classifier.')
-    parser.add_argument('filename', metavar="FILENAME",
-                        help='Dataset filename.')
-    args = parser.parse_args()
-    data = pandas.read_csv(args.filename, names=FIELD_NAMES)
-    logging.info("================================================"
-                 "================================================")
-    logging.info(
-        "Running Gaussian Naive Bayes classifier "
-        "using the entire dataset for both training and testing.")
-    logging.info("================================================"
-                 "================================================")
-    training_set, test_set = split_data(data)
-    classifier = GNB_classifier(training_set, test_set)
-    classifier.print_info()
-    predictions = classifier.predict()
-    logging.info(
-        "Predictions in the form (number, predicted class): %s", predictions)
-    accuracy = calculate_accuracy(test_set, predictions)
-    logging.info("Accuracy for the current experiment: %s", accuracy)
-    logging.info("================================================"
-                 "================================================\n")
+	filename = 'pima-indians-diabetes.data.csv'
+	splitRatio = 0.67
+	dataset = loadCsv(filename)
+	trainingSet, testSet = splitDataset(dataset, splitRatio)
+	print('Split {0} rows into train = {1} and test = {2} rows'.format(len(dataset),len(trainingSet),len(testSet)))
+	#prepare model
+	summaries = summarizeByClass(trainingSet)
+	#test model
+	predictions = getPredictions(summaries, testSet)
+	accuracy = getAccuracy(testSet, predictions)
+	print('Accuracy: {0}%'.format(accuracy))
 
-    logging.info("================================================"
-                 "================================================")
-    logging.info(
-        "Running Gaussian Naive Bayes classifier "
-        "using %d-fold cross-validation.", CV_NUM)
-    logging.info("================================================"
-                 "================================================")
-    total_accuracy = 0
-    for i in range(CV_NUM):
-        training_set, test_set = split_data(data, CV_NUM, i)
-        classifier = GNB_classifier(training_set, test_set)
-        classifier.print_info()
-        predictions = classifier.predict()
-        logging.info(
-            "Predictions in the form (number, predicted class): %s", predictions)
-        accuracy = calculate_accuracy(test_set, predictions)
-        logging.info("Accuracy for the current experiment: %s", accuracy)
-        total_accuracy += accuracy
-    logging.info("Total accuracy: %s", total_accuracy / CV_NUM)
-    logging.info("================================================"
-                 "================================================\n")
-    logging.info("================================================"
-                 "================================================")
-    logging.info(
-        "Running Zero-R classifier "
-        "using %d-fold cross-validation.", CV_NUM)
-    logging.info("================================================"
-                 "================================================")
-    total_accuracy = 0
-    for i in range(CV_NUM):
-        training_set, test_set = split_data(data, CV_NUM, i)
-        classifier = zero_r_classifier(training_set, test_set)
-        predictions = classifier.predict()
-        logging.info(
-            "Predictions in the form (number, predicted class): %s", predictions)
-        accuracy = calculate_accuracy(test_set, predictions)
-        total_accuracy += accuracy
-    logging.info("Total accuracy: %s", total_accuracy / CV_NUM)
-
-
-if __name__ == "__main__":
-    main()
+main()
